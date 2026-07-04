@@ -75,6 +75,9 @@ export default function App() {
   // chat
   const [chat, setChat] = useState([]); const [remaining, setRemaining] = useState(3);
   const [input, setInput] = useState(""); const [thinking, setThinking] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [zoom, setZoom] = useState(100);
+  const [toast, setToast] = useState("");
   const fileRef = useRef(null);
 
   const commit = (next) => { setPast((p) => [...p, doc]); setFuture([]); setDoc(next); };
@@ -83,6 +86,35 @@ export default function App() {
   const setD = (patch) => setDesign((s) => ({ ...s, ...patch }));
   const useTemplate = (t) => setDesign((s) => ({ ...s, accent: t.accent, header: t.header, corner: t.corner, font: t.font }));
   const apply = () => { setApplied(true); setTimeout(() => setApplied(false), 1400); };
+  const notify = (m) => { setToast(m); setTimeout(() => setToast(""), 2200); };
+  const editField = (updater) => setDoc((d) => { const nd = structuredClone(d); updater(nd); return nd; });
+  const toggleEdit = () => { if (!doc) return; if (!editMode) { setPast((pp) => [...pp, doc]); setFuture([]); } setEditMode((e) => !e); };
+  const shareCopy = async () => {
+    if (!doc) return;
+    let t = doc.title + "\n\n";
+    doc.sections.forEach((s) => {
+      t += s.heading + "\n";
+      if (s.kind === "para") t += (s.text || "") + "\n";
+      if (s.kind === "list") (s.items || []).forEach((i) => (t += "\u2022 " + i + "\n"));
+      if (s.kind === "numbered") (s.items || []).forEach((i, k) => (t += (k + 1) + ". " + i + "\n"));
+      if (s.kind === "callout") (s.lines || []).forEach((l) => (t += l + "\n"));
+      if (s.kind === "table") { t += (s.columns || []).join(" | ") + "\n"; (s.rows || []).forEach((r) => (t += r.join(" | ") + "\n")); }
+      t += "\n";
+    });
+    try { await navigator.clipboard.writeText(t.trim()); notify("Document text copied to clipboard"); }
+    catch { notify("Couldn't copy \u2014 use Export instead"); }
+  };
+  const enhanceImage = () => {
+    if (!image) return;
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+      const ctx = c.getContext("2d"); ctx.filter = "contrast(1.18) brightness(1.06) saturate(1.05)"; ctx.drawImage(img, 0, 0);
+      const url = c.toDataURL("image/jpeg", 0.9); setImage({ dataUrl: url, base64: url.split(",")[1] }); notify("Enhanced \u2014 sharper contrast");
+    };
+    img.src = image.dataUrl;
+  };
+  const openFull = () => { if (!image) return; const w = window.open("", "_blank"); if (w) w.document.write('<title>Scan</title><body style="margin:0;background:#111"><img src="' + image.dataUrl + '" style="max-width:100%;display:block;margin:auto"></body>'); };
 
   const onFile = useCallback((file) => {
     if (!file || !file.type.startsWith("image/")) return;
@@ -171,17 +203,17 @@ export default function App() {
         <button className="newscan" onClick={() => fileRef.current?.click()}><Plus size={18} /> New Scan</button>
         <nav className="nav">
           <NavItem icon={<LayoutDashboard size={18} />} label="Dashboard" active />
-          <NavItem icon={<FileText size={18} />} label="My Documents" />
-          <NavItem icon={<LayoutTemplate size={18} />} label="Templates" />
-          <NavItem icon={<Trash2 size={18} />} label="Trash" />
+          <NavItem icon={<FileText size={18} />} label="My Documents" onClick={() => notify("My Documents is coming soon \u2014 saved scans will live here.")} />
+          <NavItem icon={<LayoutTemplate size={18} />} label="Templates" onClick={() => notify("Saved templates are coming soon.")} />
+          <NavItem icon={<Trash2 size={18} />} label="Trash" onClick={() => notify("Trash is coming soon.")} />
           <div className="nav-h">Tools</div>
           <NavItem icon={<ScanLine size={18} />} label="Scan & Upload" onClick={() => fileRef.current?.click()} />
-          <NavItem icon={<Wand2 size={18} />} label="AI Organize" />
-          <NavItem icon={<TableIcon size={18} />} label="Accounting Sheet" />
-          <NavItem icon={<PenTool size={18} />} label="Drawing to Doc" />
+          <NavItem icon={<Wand2 size={18} />} label="AI Organize" onClick={() => fileRef.current?.click()} />
+          <NavItem icon={<TableIcon size={18} />} label="Accounting Sheet" onClick={() => fileRef.current?.click()} />
+          <NavItem icon={<PenTool size={18} />} label="Drawing to Doc" onClick={() => fileRef.current?.click()} />
           <div className="nav-h">Account</div>
-          <NavItem icon={<Settings size={18} />} label="Settings" />
-          <NavItem icon={<HelpCircle size={18} />} label="Help & Support" />
+          <NavItem icon={<Settings size={18} />} label="Settings" onClick={() => notify("Settings are coming soon.")} />
+          <NavItem icon={<HelpCircle size={18} />} label="Help & Support" onClick={() => notify("Help & Support is coming soon.")} />
         </nav>
         <div className="appearance">
           <div className="app-k">Appearance</div>
@@ -209,7 +241,7 @@ export default function App() {
           <div className="top-actions">
             <button className="ic-btn" onClick={undo} disabled={!past.length}><Undo2 size={17} /></button>
             <button className="ic-btn" onClick={redo} disabled={!future.length}><Redo2 size={17} /></button>
-            <button className="btn-ghost"><Share2 size={15} /> Share</button>
+            <button className="btn-ghost" onClick={shareCopy} disabled={!doc}><Share2 size={15} /> Share</button>
             <div className="export-wrap">
               <button className="btn-primary" onClick={() => setExportOpen((o) => !o)} disabled={!doc}><Download size={15} /> Export <ChevronDown size={14} /></button>
               {exportOpen && (
@@ -240,33 +272,34 @@ export default function App() {
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
               onDrop={(e) => { e.preventDefault(); setDragOver(false); onFile(e.dataTransfer.files && e.dataTransfer.files[0]); }}>
-              {image ? <img src={image.dataUrl} alt="Scanned page" /> : (<button className="scan-empty" onClick={() => fileRef.current?.click()}><div className="scan-empty-ic"><ScanLine size={26} /></div><div className="scan-empty-t">Scan or drop a page</div><div className="scan-empty-s">Click to choose a photo, or drag one here</div></button>)}
+              {image ? <img src={image.dataUrl} alt="Scanned page" style={{ width: zoom + "%" }} /> : (<button className="scan-empty" onClick={() => fileRef.current?.click()}><div className="scan-empty-ic"><ScanLine size={26} /></div><div className="scan-empty-t">Scan or drop a page</div><div className="scan-empty-s">Click to choose a photo, or drag one here</div></button>)}
               {busy && <div className="scan-busy"><div className="spin" /> Reading page…</div>}
               <div className="drop-hint"><ScanLine size={22} /><span>Drop your page to scan</span></div>
             </div>
             <div className="scan-tools">
-              <button className="tool soon" title="Coming soon"><Crop size={16} /><span>Crop</span></button>
+              <button className="tool" onClick={() => notify("Crop is coming soon.")}><Crop size={16} /><span>Crop</span></button>
               <button className="tool" onClick={rotateImage} disabled={!image}><RotateCw size={16} /><span>Rotate</span></button>
-              <button className="tool soon" title="Coming soon"><Sun size={16} /><span>Enhance</span></button>
-              <button className="tool soon" title="Coming soon"><SlidersHorizontal size={16} /><span>Filters</span></button>
+              <button className="tool" onClick={enhanceImage} disabled={!image}><Sun size={16} /><span>Enhance</span></button>
+              <button className="tool" onClick={() => notify("Filters are coming soon.")}><SlidersHorizontal size={16} /><span>Filters</span></button>
               <button className="tool" onClick={() => image && organize(image.base64)} disabled={!image}><RefreshCw size={16} /><span>Re-scan</span></button>
             </div>
-            <div className="zoom"><button><Minus size={15} /></button><span>100%</span><button><Plus size={15} /></button><button className="mz"><Maximize2 size={14} /></button></div>
+            <div className="zoom"><button onClick={() => setZoom((z) => Math.max(50, z - 25))} disabled={!image}><Minus size={15} /></button><span>{zoom}%</span><button onClick={() => setZoom((z) => Math.min(200, z + 25))} disabled={!image}><Plus size={15} /></button><button className="mz" onClick={openFull} disabled={!image}><Maximize2 size={14} /></button></div>
           </section>
 
           <section className="pane">
-            <div className="pane-h"><span>AI Organized Document</span><button className="chip-btn"><Pencil size={13} /> Edit Text</button></div>
+            <div className="pane-h"><span>AI Organized Document</span><button className={"chip-btn" + (editMode ? " on" : "")} onClick={toggleEdit} disabled={!doc}>{editMode ? <><Check size={13} /> Done</> : <><Pencil size={13} /> Edit Text</>}</button></div>
+            {editMode && <div className="edit-hint">Click any text to edit it, then press Done.</div>}
             <div className="doc-scroll">
               {doc ? (
-                <article className="page" style={docVars(design)}>
-                  <DocHeader doc={doc} header={design.header} />
-                  {doc.sections.map((s) => <Section key={s.id} s={s} />)}
+                <article className={"page" + (editMode ? " editing" : "")} style={docVars(design)}>
+                  <DocHeader doc={doc} header={design.header} editing={editMode} editField={editField} />
+                  {doc.sections.map((s, i) => <Section key={s.id} s={s} i={i} editing={editMode} editField={editField} />)}
                 </article>
               ) : (
                 <div className="doc-empty"><div className="doc-empty-ic"><FileText size={26} /></div><div className="doc-empty-t">Your organized document appears here</div><div className="doc-empty-s">Scan or drop a page to get started</div></div>
               )}
             </div>
-            <div className="pager"><button><ChevronLeft size={16} /></button><span>1 / 1</span><button><ChevronRight size={16} /></button></div>
+            <div className="pager"><button disabled><ChevronLeft size={16} /></button><span>1 / 1</span><button disabled><ChevronRight size={16} /></button></div>
           </section>
         </div>
 
@@ -348,31 +381,45 @@ export default function App() {
 
         <button className={"apply " + (applied ? "done" : "")} onClick={apply}>{applied ? <><Check size={16} /> Applied</> : <><Check size={16} /> Apply to Document</>}</button>
       </aside>
+
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }
 
 // ================= pieces =================
 function NavItem({ icon, label, active, onClick }) { return <button className={"nav-i " + (active ? "on" : "")} onClick={onClick}>{icon}<span>{label}</span></button>; }
-function DocHeader({ doc, header }) {
+function Editable({ value, onChange, editing, className, tag = "span" }) {
+  const Tag = tag;
+  if (!editing) return <Tag className={className}>{value}</Tag>;
+  return <Tag className={(className ? className + " " : "") + "editable"} contentEditable suppressContentEditableWarning onBlur={(e) => onChange(e.currentTarget.textContent)}>{value}</Tag>;
+}
+function DocHeader({ doc, header, editing, editField }) {
   return (
     <div className={"dhead " + header}>
-      <h1 className="d-title">{doc.title}</h1>
-      {(doc.date || doc.tag) && <div className="d-meta">{doc.date && <span><Calendar size={13} /> {doc.date}</span>}{doc.tag && <span><FileText size={13} /> {doc.tag}</span>}</div>}
+      <Editable tag="h1" className="d-title" editing={editing} value={doc.title} onChange={(v) => editField((nd) => { nd.title = v; })} />
+      {(doc.date || doc.tag || editing) && (
+        <div className="d-meta">
+          <span><Calendar size={13} /> <Editable editing={editing} value={doc.date} onChange={(v) => editField((nd) => { nd.date = v; })} /></span>
+          <span><FileText size={13} /> <Editable editing={editing} value={doc.tag} onChange={(v) => editField((nd) => { nd.tag = v; })} /></span>
+        </div>
+      )}
     </div>
   );
 }
-function Section({ s }) {
+function Section({ s, i, editing, editField }) {
+  const setHeading = (v) => editField((nd) => { nd.sections[i].heading = v; });
+  const setItem = (arr, k, v) => editField((nd) => { nd.sections[i][arr][k] = v; });
   return (
     <div className="d-section">
-      <h2 className="d-h">{s.heading}</h2>
-      {s.kind === "para" && <p className="d-p">{s.text}</p>}
-      {s.kind === "list" && <ul className="d-ul">{(s.items || []).map((i, k) => <li key={k}>{i}</li>)}</ul>}
-      {s.kind === "numbered" && <ol className="d-ol">{(s.items || []).map((i, k) => <li key={k}><span className="num">{k + 1}</span>{i}</li>)}</ol>}
+      {s.kind !== "callout" && <Editable tag="h2" className="d-h" editing={editing} value={s.heading} onChange={setHeading} />}
+      {s.kind === "para" && <Editable tag="p" className="d-p" editing={editing} value={s.text} onChange={(v) => editField((nd) => { nd.sections[i].text = v; })} />}
+      {s.kind === "list" && <ul className="d-ul">{(s.items || []).map((it, k) => <li key={k}><Editable editing={editing} value={it} onChange={(v) => setItem("items", k, v)} /></li>)}</ul>}
+      {s.kind === "numbered" && <ol className="d-ol">{(s.items || []).map((it, k) => <li key={k}><span className="num">{k + 1}</span><Editable editing={editing} value={it} onChange={(v) => setItem("items", k, v)} /></li>)}</ol>}
       {s.kind === "table" && (
-        <div className="d-tw"><table className="d-table"><thead><tr>{(s.columns || []).map((c, i) => <th key={i} className={i ? "r" : ""}>{c}</th>)}</tr></thead>
-          <tbody>{(s.rows || []).map((r, ri) => <tr key={ri} className={s.totalRow && ri === s.rows.length - 1 ? "total" : ""}>{r.map((c, ci) => <td key={ci} className={ci ? "r" : ""}>{c}</td>)}</tr>)}</tbody></table></div>)}
-      {s.kind === "callout" && <div className="d-callout"><Calendar size={18} /><div><div className="cal-h">{s.heading}</div>{(s.lines || []).map((l, k) => <div key={k} className="cal-l">{l}</div>)}</div></div>}
+        <div className="d-tw"><table className="d-table"><thead><tr>{(s.columns || []).map((c, ci) => <th key={ci} className={ci ? "r" : ""}><Editable editing={editing} value={c} onChange={(v) => editField((nd) => { nd.sections[i].columns[ci] = v; })} /></th>)}</tr></thead>
+          <tbody>{(s.rows || []).map((r, ri) => <tr key={ri} className={s.totalRow && ri === s.rows.length - 1 ? "total" : ""}>{r.map((c, ci) => <td key={ci} className={ci ? "r" : ""}><Editable editing={editing} value={c} onChange={(v) => editField((nd) => { nd.sections[i].rows[ri][ci] = v; })} /></td>)}</tr>)}</tbody></table></div>)}
+      {s.kind === "callout" && <div className="d-callout"><Calendar size={18} /><div><Editable tag="div" className="cal-h" editing={editing} value={s.heading} onChange={setHeading} />{(s.lines || []).map((l, k) => <Editable key={k} tag="div" className="cal-l" editing={editing} value={l} onChange={(v) => setItem("lines", k, v)} />)}</div></div>}
     </div>
   );
 }
@@ -484,7 +531,7 @@ const CSS = `
 .pane{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;box-shadow:var(--shadow);}
 .pane-h{display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:14px;margin-bottom:12px;color:var(--ink);}
 .chip-btn{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--mut);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:5px 10px;}
-.scan{position:relative;border-radius:12px;overflow:hidden;background:#efe9dc;border:1px solid #e5ddc9;min-height:300px;}
+.scan{position:relative;border-radius:12px;overflow:auto;background:#efe9dc;border:1px solid #e5ddc9;min-height:300px;}
 .scan img{width:100%;display:block;}
 .scan-busy{position:absolute;inset:0;background:rgba(255,255,255,.78);display:flex;align-items:center;justify-content:center;gap:10px;font-weight:600;color:var(--brand);}
 .spin{width:26px;height:26px;border-radius:50%;border:3px solid #ddd;border-top-color:var(--brand);animation:sp .8s linear infinite;}
@@ -601,9 +648,20 @@ const CSS = `
 .doc-empty-t{font-weight:600;font-size:15px;color:var(--ink);}
 .doc-empty-s{font-size:13px;}
 
+.chip-btn.on{background:var(--brand);color:#fff;border-color:var(--brand);}
+.chip-btn:disabled{opacity:.5;cursor:default;}
+.edit-hint{background:var(--brand-weak);color:var(--brand);font-size:12.5px;font-weight:500;padding:8px 12px;border-radius:9px;margin-bottom:10px;text-align:center;}
+.page.editing .editable{outline:1px dashed var(--ac);outline-offset:2px;border-radius:3px;cursor:text;transition:background .12s;}
+.page.editing .editable:hover{background:var(--ac-weak);}
+.page.editing .editable:focus{outline:2px solid var(--ac);background:#fff;}
+.page.editing .editable:empty:before{content:"Add text";color:var(--mut);opacity:.55;}
+.page.editing .dhead.modern .editable:hover{background:rgba(255,255,255,.18);}
+.page.editing .dhead.modern .editable:focus{background:rgba(0,0,0,.28);}
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:#1f2430;color:#fff;padding:11px 18px;border-radius:10px;font-size:13.5px;font-weight:500;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:80;}
+
 @media print{
   .pw{display:block;background:#fff;}
-  .side,.design,.top,.stepper,.footer-row,.pane:first-child,.pane-h,.pager{display:none !important;}
+  .side,.design,.top,.stepper,.footer-row,.pane:first-child,.pane-h,.pager,.edit-hint,.toast{display:none !important;}
   .main,.work,.pane{display:block;margin:0;padding:0;border:none;box-shadow:none;}
   .doc-scroll{overflow:visible;max-height:none;background:#fff;padding:0;}
   .page{border:none;box-shadow:none;}
