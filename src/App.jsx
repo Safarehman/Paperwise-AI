@@ -62,11 +62,12 @@ function sanitize(p = {}) {
 
 // ================= app =================
 export default function App() {
-  const [doc, setDoc] = useState(DEFAULT_DOC);
+  const [doc, setDoc] = useState(null);
   const [past, setPast] = useState([]); const [future, setFuture] = useState([]);
   const [design, setDesign] = useState(DEFAULT_DESIGN);
   const [skin, setSkin] = useState("violet");
   const [image, setImage] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const [applied, setApplied] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -91,7 +92,7 @@ export default function App() {
       const c = document.createElement("canvas"); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
       c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
       const url = c.toDataURL("image/jpeg", 0.85);
-      setImage({ dataUrl: url }); organize(url.split(",")[1]);
+      const b64 = url.split(",")[1]; setImage({ dataUrl: url, base64: b64 }); organize(b64);
     }; img.src = e.target.result; };
     reader.readAsDataURL(file);
   }, [doc]);
@@ -108,10 +109,27 @@ export default function App() {
     } catch { /* keep current */ } setBusy(false);
   };
 
+  const rotateImage = () => {
+    if (!image) return;
+    const img = new Image();
+    img.onload = () => {
+      const w = img.width, h = img.height;
+      const c = document.createElement("canvas");
+      c.width = h; c.height = w;
+      const ctx = c.getContext("2d");
+      ctx.translate(h / 2, w / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(img, -w / 2, -h / 2);
+      const url = c.toDataURL("image/jpeg", 0.85);
+      setImage({ dataUrl: url, base64: url.split(",")[1] });
+    };
+    img.src = image.dataUrl;
+  };
+
   const sendChat = async () => {
     const q = input.trim(); if (!q || remaining <= 0 || thinking) return;
     setChat((c) => [...c, { role: "user", text: q }]); setInput(""); setThinking(true);
-    const sys = `You turn a plain-language look request into document design settings. Current settings: ${JSON.stringify(design)}. Allowed values — font: one of ${FONTS.join(", ")}; header: modern|classic|minimal; layout: compact|balanced|spacious; corner: square|rounded|soft; margins: 0 (tight) | 1 (normal) | 2 (wide); size: 10-18; accent: any hex like "#1e3a8a". The document is titled "${doc.title}". User request: "${q}". Respond ONLY with JSON: {"reply":"one short friendly sentence","design":{ only the fields to change }}.`;
+    const sys = `You turn a plain-language look request into document design settings. Current settings: ${JSON.stringify(design)}. Allowed values — font: one of ${FONTS.join(", ")}; header: modern|classic|minimal; layout: compact|balanced|spacious; corner: square|rounded|soft; margins: 0 (tight) | 1 (normal) | 2 (wide); size: 10-18; accent: any hex like "#1e3a8a". The document is titled "${doc?.title || "an untitled document"}". User request: "${q}". Respond ONLY with JSON: {"reply":"one short friendly sentence","design":{ only the fields to change }}.`;
     try {
       const res = await fetch("/.netlify/functions/customize", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: sys }) });
@@ -128,6 +146,7 @@ export default function App() {
   };
 
   const addSuggestion = (kind) => {
+    if (!doc) return;
     const id = "sg" + Date.now();
     const map = {
       exec: { id, kind: "para", heading: "Executive Summary", text: "The team reviewed Q2 progress and approved a total budget of $18,800 across marketing, development, and operations. Three action items were assigned, with a follow-up on June 15." },
@@ -180,17 +199,19 @@ export default function App() {
       <main className="main">
         <header className="top">
           <div className="top-title">
-            {editingTitle ? (
-              <input className="title-in" autoFocus value={doc.title} onChange={(e) => setDoc({ ...doc, title: e.target.value })} onBlur={() => setEditingTitle(false)} onKeyDown={(e) => e.key === "Enter" && setEditingTitle(false)} />
-            ) : (<><h1>{doc.title}</h1><button className="ic-btn" onClick={() => setEditingTitle(true)}><Pencil size={15} /></button></>)}
-            <span className="saved"><Check size={14} /> All changes saved</span>
+            {doc ? (
+              editingTitle ? (
+                <input className="title-in" autoFocus value={doc.title} onChange={(e) => setDoc({ ...doc, title: e.target.value })} onBlur={() => setEditingTitle(false)} onKeyDown={(e) => e.key === "Enter" && setEditingTitle(false)} />
+              ) : (<><h1>{doc.title || "Untitled"}</h1><button className="ic-btn" onClick={() => setEditingTitle(true)}><Pencil size={15} /></button></>)
+            ) : (<h1 className="untitled">New document</h1>)}
+            {doc && <span className="saved"><Check size={14} /> All changes saved</span>}
           </div>
           <div className="top-actions">
             <button className="ic-btn" onClick={undo} disabled={!past.length}><Undo2 size={17} /></button>
             <button className="ic-btn" onClick={redo} disabled={!future.length}><Redo2 size={17} /></button>
             <button className="btn-ghost"><Share2 size={15} /> Share</button>
             <div className="export-wrap">
-              <button className="btn-primary" onClick={() => setExportOpen((o) => !o)}><Download size={15} /> Export <ChevronDown size={14} /></button>
+              <button className="btn-primary" onClick={() => setExportOpen((o) => !o)} disabled={!doc}><Download size={15} /> Export <ChevronDown size={14} /></button>
               {exportOpen && (
                 <div className="menu" onMouseLeave={() => setExportOpen(false)}>
                   <button onClick={() => { window.print(); setExportOpen(false); }}>PDF (print)</button>
@@ -214,14 +235,21 @@ export default function App() {
 
         <div className="work">
           <section className="pane">
-            <div className="pane-h"><span>Original Scan</span><button className="chip-btn"><RotateCw size={13} /> Retake</button></div>
-            <div className="scan">
-              {image ? <img src={image.dataUrl} alt="Scanned page" /> : <ScanFacsimile />}
+            <div className="pane-h"><span>Original Scan</span><button className="chip-btn" onClick={() => fileRef.current?.click()}><RotateCw size={13} /> Retake</button></div>
+            <div className={"scan" + (dragOver ? " dragover" : "")}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+              onDrop={(e) => { e.preventDefault(); setDragOver(false); onFile(e.dataTransfer.files && e.dataTransfer.files[0]); }}>
+              {image ? <img src={image.dataUrl} alt="Scanned page" /> : (<button className="scan-empty" onClick={() => fileRef.current?.click()}><div className="scan-empty-ic"><ScanLine size={26} /></div><div className="scan-empty-t">Scan or drop a page</div><div className="scan-empty-s">Click to choose a photo, or drag one here</div></button>)}
               {busy && <div className="scan-busy"><div className="spin" /> Reading page…</div>}
+              <div className="drop-hint"><ScanLine size={22} /><span>Drop your page to scan</span></div>
             </div>
             <div className="scan-tools">
-              {[[Crop, "Crop"], [RotateCw, "Rotate"], [Sun, "Enhance"], [SlidersHorizontal, "Filters"], [RefreshCw, "Re-scan"]].map(([Ic, l]) => (
-                <button key={l} className="tool"><Ic size={16} /><span>{l}</span></button>))}
+              <button className="tool soon" title="Coming soon"><Crop size={16} /><span>Crop</span></button>
+              <button className="tool" onClick={rotateImage} disabled={!image}><RotateCw size={16} /><span>Rotate</span></button>
+              <button className="tool soon" title="Coming soon"><Sun size={16} /><span>Enhance</span></button>
+              <button className="tool soon" title="Coming soon"><SlidersHorizontal size={16} /><span>Filters</span></button>
+              <button className="tool" onClick={() => image && organize(image.base64)} disabled={!image}><RefreshCw size={16} /><span>Re-scan</span></button>
             </div>
             <div className="zoom"><button><Minus size={15} /></button><span>100%</span><button><Plus size={15} /></button><button className="mz"><Maximize2 size={14} /></button></div>
           </section>
@@ -229,26 +257,31 @@ export default function App() {
           <section className="pane">
             <div className="pane-h"><span>AI Organized Document</span><button className="chip-btn"><Pencil size={13} /> Edit Text</button></div>
             <div className="doc-scroll">
-              <article className="page" style={docVars(design)}>
-                <DocHeader doc={doc} header={design.header} />
-                {doc.sections.map((s) => <Section key={s.id} s={s} />)}
-              </article>
+              {doc ? (
+                <article className="page" style={docVars(design)}>
+                  <DocHeader doc={doc} header={design.header} />
+                  {doc.sections.map((s) => <Section key={s.id} s={s} />)}
+                </article>
+              ) : (
+                <div className="doc-empty"><div className="doc-empty-ic"><FileText size={26} /></div><div className="doc-empty-t">Your organized document appears here</div><div className="doc-empty-s">Scan or drop a page to get started</div></div>
+              )}
             </div>
             <div className="pager"><button><ChevronLeft size={16} /></button><span>1 / 1</span><button><ChevronRight size={16} /></button></div>
           </section>
         </div>
 
-        <div className="footer-row">
-          <div className="suggest">
-            <div className="suggest-h"><Sparkles size={15} /> AI Suggestions</div>
-            <div className="suggest-btns">
-              <button onClick={() => addSuggestion("exec")}>Add Executive Summary</button>
-              <button onClick={() => addSuggestion("takeaways")}>Add Key Takeaways</button>
-              <button onClick={() => addSuggestion("attendees")}>Add Meeting Attendees</button>
+        {doc && (
+          <div className="footer-row">
+            <div className="suggest">
+              <div className="suggest-h"><Sparkles size={15} /> AI Suggestions</div>
+              <div className="suggest-btns">
+                <button onClick={() => addSuggestion("exec")}>Add Executive Summary</button>
+                <button onClick={() => addSuggestion("takeaways")}>Add Key Takeaways</button>
+                <button onClick={() => addSuggestion("attendees")}>Add Meeting Attendees</button>
+              </div>
             </div>
           </div>
-          <div className="ready"><Check size={16} /><div><b>Document looks great!</b><span>Ready to export</span></div></div>
-        </div>
+        )}
       </main>
 
       {/* design panel */}
@@ -492,7 +525,7 @@ const CSS = `
 .pager button{width:30px;height:30px;border:1px solid var(--line);background:var(--surface);border-radius:8px;display:grid;place-items:center;color:var(--mut);}
 .pager span{font-size:12.5px;color:var(--mut);}
 
-.footer-row{display:grid;grid-template-columns:1fr auto;gap:16px;padding:0 22px 22px;}
+.footer-row{display:grid;grid-template-columns:1fr;gap:16px;padding:0 22px 22px;}
 @media(max-width:900px){.footer-row{grid-template-columns:1fr;}}
 .suggest{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;box-shadow:var(--shadow);}
 .suggest-h{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13.5px;color:var(--brand);margin-bottom:10px;}
@@ -547,6 +580,26 @@ const CSS = `
 .hprev.minimal{background:linear-gradient(var(--surface) 70%,var(--line) 70% 74%,var(--surface) 74%);}
 .apply{width:100%;background:linear-gradient(135deg,var(--brand-2),var(--brand));color:#fff;border:none;border-radius:11px;padding:12px;font-weight:600;font-size:14px;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 6px 18px rgba(109,40,217,.28);margin-top:4px;}
 .apply.done{background:#16a34a;box-shadow:none;}
+
+.scan.dragover{outline:2px dashed var(--brand);outline-offset:-6px;}
+.drop-hint{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:rgba(109,40,217,.1);color:var(--brand);font-weight:600;font-size:14px;pointer-events:none;}
+.scan.dragover .drop-hint{display:flex;}
+.tool:disabled{opacity:.4;cursor:default;}
+.tool:disabled:hover{color:var(--mut);}
+.tool.soon{opacity:.45;cursor:default;}
+.tool.soon:hover{color:var(--mut);}
+
+.top-title h1.untitled{color:var(--mut);font-weight:500;}
+.btn-primary:disabled{opacity:.5;box-shadow:none;cursor:default;}
+.scan-empty{width:100%;min-height:300px;border:none;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;color:var(--mut);}
+.scan-empty:hover{color:var(--brand);}
+.scan-empty-ic{width:56px;height:56px;border-radius:16px;background:var(--brand-weak);color:var(--brand);display:grid;place-items:center;margin-bottom:4px;}
+.scan-empty-t{font-weight:600;font-size:15px;color:var(--ink);}
+.scan-empty-s{font-size:13px;}
+.doc-empty{min-height:300px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;color:var(--mut);padding:28px;}
+.doc-empty-ic{width:56px;height:56px;border-radius:16px;background:var(--surface);border:1px solid var(--line);color:var(--mut);display:grid;place-items:center;margin-bottom:4px;}
+.doc-empty-t{font-weight:600;font-size:15px;color:var(--ink);}
+.doc-empty-s{font-size:13px;}
 
 @media print{
   .pw{display:block;background:#fff;}
