@@ -4,9 +4,25 @@
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
-const PROMPT = `You are a document organizer. Read this photo and return ONLY JSON (no fences):
-{"title":"...","date":"","tag":"","sections":[{"kind":"list|numbered|table|callout|para","heading":"...","items":["..."],"columns":["..."],"rows":[["..."]],"totalRow":false,"lines":["..."],"text":"..."}]}
-Use only the fields each kind needs. Transcribe table numbers exactly; totalRow:true if last row is a total. Valid JSON only.`;
+const PROMPT = `You are a document organizer. Read this photo of a page and return ONLY a JSON object (no code fences, no commentary).
+
+IMPORTANT: capture EVERY sentence on the page. Never summarize, shorten, or drop any text. If unsure whether to include something, include it.
+
+Return this shape:
+{"title":"short title","date":"","tag":"","sections":[ { "kind":"...", "heading":"...", ...fields } ]}
+
+Section kinds (use the one that fits; include ONLY that kind's fields):
+- "para" -> a paragraph OR a quotation. Put the COMPLETE text in "text". Represent quotes here, including the full quote and who said it.
+- "list" -> bullet points. "items": ["...", "..."]
+- "numbered" -> numbered steps. "items": ["...", "..."]
+- "table" -> "columns": ["..."], "rows": [["..."]], and "totalRow": true only if the last row is a total.
+- "callout" -> a SHORT highlighted note such as a date, deadline, or reminder. Put its text in "lines": ["..."]. Never output a callout with empty lines.
+
+Rules:
+- Every section needs a brief "heading". If none is natural, write a short descriptive one.
+- Transcribe numbers, names, and quotations exactly as written.
+- Prefer "para" for any block of prose longer than one short line; only use "callout" for brief highlighted notes.
+- Return valid JSON only.`;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
@@ -25,7 +41,7 @@ exports.handler = async (event) => {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 1200,
+        max_tokens: 1500,
         messages: [{ role: "user", content: [
           { type: "image", source: { type: "base64", media_type: mediaType || "image/jpeg", data: image } },
           { type: "text", text: PROMPT },
